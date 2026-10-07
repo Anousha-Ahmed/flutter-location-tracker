@@ -1,0 +1,1 @@
+const String maptilerKey = 'YOUR_MAPTILER_KEY';
