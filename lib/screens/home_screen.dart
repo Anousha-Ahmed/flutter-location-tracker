@@ -1,11 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_map/flutter_map.dart';
-import 'package:latlong2/latlong.dart';
-
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import '../services/auth_service.dart';
 import '../services/firestore_service.dart';
 import '../services/location_service.dart';
-import '../config/secrets.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -18,12 +15,19 @@ class _HomeScreenState extends State<HomeScreen> {
   final _authService = AuthService();
   final _locationService = LocationService();
   final _firestoreService = FirestoreService();
-  final _mapController = MapController();
 
+  GoogleMapController? _mapController;
+  final Set<Marker> _markers = {};
   bool _fetching = false;
-  LatLng? _current;
+
+  double? _lat;
+  double? _lng;
   DateTime? _updatedAt;
-  double? _accuracy;
+
+  static const CameraPosition _initialPosition = CameraPosition(
+    target: LatLng(30.3753, 69.3451),
+    zoom: 4,
+  );
 
   String _formatTime(DateTime t) {
     final h = t.hour % 12 == 0 ? 12 : t.hour % 12;
@@ -32,35 +36,13 @@ class _HomeScreenState extends State<HomeScreen> {
     return '${t.day}/${t.month}/${t.year}  $h:$m $ap';
   }
 
-  /// Naam na mile to email ka pehla hissa dikhata hai
-  String _displayName() {
-    final user = _authService.currentUser;
-    final name = user?.displayName;
-    if (name != null && name.trim().isNotEmpty) return name;
-
-    for (final p in user?.providerData ?? []) {
-      final n = p.displayName;
-      if (n != null && n.trim().isNotEmpty) return n;
-    }
-
-    final email = user?.email ?? '';
-    if (email.contains('@')) {
-      final part = email.split('@').first;
-      return part.isEmpty ? 'User' : part[0].toUpperCase() + part.substring(1);
-    }
-    return 'User';
-  }
-
   void _showMessage(String msg) {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          behavior: SnackBarBehavior.floating,
-          margin: const EdgeInsets.fromLTRB(16, 0, 16, 150),
-          content: Text(msg),
-        ),
-      );
+      ..showSnackBar(SnackBar(
+        behavior: SnackBarBehavior.floating,
+        content: Text(msg),
+      ));
   }
 
   Future<void> _onFabPressed() async {
@@ -68,19 +50,27 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() => _fetching = true);
 
     try {
-      // 1. permission + current location
       final position = await _locationService.getCurrentPosition();
       final latLng = LatLng(position.latitude, position.longitude);
 
-      // 2. move camera + show marker
-      setState(() {
-        _current = latLng;
-        _updatedAt = DateTime.now();
-        _accuracy = position.accuracy;
-      });
-      _mapController.move(latLng, 16);
+      await _mapController?.animateCamera(
+        CameraUpdate.newCameraPosition(
+            CameraPosition(target: latLng, zoom: 16)),
+      );
 
-      // 3. save / update in Firestore
+      setState(() {
+        _lat = position.latitude;
+        _lng = position.longitude;
+        _updatedAt = DateTime.now();
+        _markers
+          ..clear()
+          ..add(Marker(
+            markerId: const MarkerId('current_location'),
+            position: latLng,
+            infoWindow: const InfoWindow(title: 'You are here'),
+          ));
+      });
+
       final user = _authService.currentUser;
       if (user != null) {
         await _firestoreService.saveUserLocation(
@@ -100,9 +90,81 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Widget _card({required Widget child}) {
+  Widget _userCard() {
+    final user = _authService.currentUser;
+    final photo = user?.photoURL;
+
+    return SizedBox(
+      width: double.infinity,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.12),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            CircleAvatar(
+              radius: 22,
+              backgroundColor: const Color(0xFFE3EDFF),
+              backgroundImage: photo != null ? NetworkImage(photo) : null,
+              child: photo == null
+                  ? const Icon(Icons.person, color: Color(0xFF2979FF))
+                  : null,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    (user?.displayName != null && user!.displayName!.trim().isNotEmpty)
+                        ? user.displayName!
+                        : 'User',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    softWrap: false,
+                    style: const TextStyle(
+                        fontWeight: FontWeight.w700, fontSize: 15),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    user?.email ?? '',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    softWrap: false,
+                    style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            IconButton(
+              tooltip: 'Sign out',
+              icon: const Icon(Icons.logout_rounded),
+              onPressed: _authService.signOut,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _locationCard() {
+    final has = _lat != null && _lng != null;
+
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(18),
@@ -114,90 +176,32 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-      child: child,
-    );
-  }
-
-  Widget _userCard() {
-    final user = _authService.currentUser;
-    final photo = user?.photoURL;
-    return _card(
-      child: Row(
-        children: [
-          CircleAvatar(
-            radius: 22,
-            backgroundColor: const Color(0xFFE3EDFF),
-            backgroundImage: photo != null ? NetworkImage(photo) : null,
-            child: photo == null
-                ? const Icon(Icons.person, color: Color(0xFF2979FF))
-                : null,
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  _displayName(),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w700,
-                    fontSize: 15,
-                  ),
-                ),
-                Text(
-                  user?.email ?? '',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
-                ),
-              ],
-            ),
-          ),
-          IconButton(
-            tooltip: 'Sign out',
-            icon: const Icon(Icons.logout_rounded),
-            onPressed: _authService.signOut,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _locationCard() {
-    return _card(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Row(
-            children: [
-              Icon(Icons.pin_drop_rounded, color: Color(0xFF2979FF), size: 20),
+          Row(
+            children: const [
+              Icon(Icons.pin_drop_rounded,
+                  color: Color(0xFF2979FF), size: 20),
               SizedBox(width: 6),
-              Text(
-                'Current location',
-                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
-              ),
+              Text('Current location',
+                  style:
+                      TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
             ],
           ),
           const SizedBox(height: 10),
-          if (_current == null)
+          if (!has)
             Text(
               'Tap the button to find your location',
               style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
             )
           else ...[
-            Text(
-              'Lat: ${_current!.latitude.toStringAsFixed(6)}',
-              style: const TextStyle(fontSize: 13),
-            ),
+            Text('Lat: ${_lat!.toStringAsFixed(6)}',
+                style: const TextStyle(fontSize: 13)),
             const SizedBox(height: 2),
-            Text(
-              'Lng: ${_current!.longitude.toStringAsFixed(6)}',
-              style: const TextStyle(fontSize: 13),
-            ),
+            Text('Lng: ${_lng!.toStringAsFixed(6)}',
+                style: const TextStyle(fontSize: 13)),
             const SizedBox(height: 6),
             Text(
               'Updated: ${_formatTime(_updatedAt!)}',
@@ -214,83 +218,24 @@ class _HomeScreenState extends State<HomeScreen> {
     return Scaffold(
       body: Stack(
         children: [
-          // Map (full screen)
-          FlutterMap(
-            mapController: _mapController,
-            options: const MapOptions(
-              initialCenter: LatLng(30.3753, 69.3451),
-              initialZoom: 5,
-            ),
-            children: [
-              TileLayer(
-                urlTemplate: 'https://api.maptiler.com/maps/streets-v2/256/{z}/{x}/{y}.png?key=$maptilerKey',
-                userAgentPackageName: 'com.example.location_tracker_app',
-              ),
-
-              // Accuracy circle (halka neela)
-              if (_current != null && _accuracy != null)
-                CircleLayer(
-                  circles: [
-                    CircleMarker(
-                      point: _current!,
-                      radius: _accuracy!,
-                      useRadiusInMeter: true,
-                      color: const Color(0xFF2979FF).withValues(alpha: 0.15),
-                      borderColor: const Color(0xFF2979FF)
-                          .withValues(alpha: 0.4),
-                      borderStrokeWidth: 1,
-                    ),
-                  ],
-                ),
-
-              // Neela dot (Google Maps jaisa) + laal pin
-              if (_current != null)
-                MarkerLayer(
-                  markers: [
-                    Marker(
-                      point: _current!,
-                      width: 22,
-                      height: 22,
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF2979FF),
-                          shape: BoxShape.circle,
-                          border: Border.all(color: Colors.white, width: 3),
-                          boxShadow: const [
-                            BoxShadow(color: Colors.black26, blurRadius: 6),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-
-              const RichAttributionWidget(
-                alignment: AttributionAlignment.bottomLeft,
-                attributions: [
-                  TextSourceAttribution(
-                    '© MapTiler © OpenStreetMap contributors',
-                  ),
-                ],
-              ),
-            ],
+          GoogleMap(
+            initialCameraPosition: _initialPosition,
+            markers: _markers,
+            onMapCreated: (c) => _mapController = c,
+            zoomControlsEnabled: false,
+            myLocationButtonEnabled: false,
+            mapToolbarEnabled: false,
           ),
 
           // Top: user card
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            child: SafeArea(
-              bottom: false,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                child: _userCard(),
-              ),
+          SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+              child: _userCard(),
             ),
           ),
 
-          // Bottom-left: location card (right gap FAB ke liye)
+          // Bottom-left: coordinates card (right gap leaves room for FAB)
           Positioned(
             left: 16,
             right: 96,
@@ -305,14 +250,13 @@ class _HomeScreenState extends State<HomeScreen> {
         onPressed: _onFabPressed,
         backgroundColor: const Color(0xFF2979FF),
         foregroundColor: Colors.white,
+        elevation: 6,
         child: _fetching
             ? const SizedBox(
                 width: 24,
                 height: 24,
                 child: CircularProgressIndicator(
-                  strokeWidth: 2.5,
-                  color: Colors.white,
-                ),
+                    strokeWidth: 2.5, color: Colors.white),
               )
             : const Icon(Icons.my_location_rounded),
       ),
@@ -322,7 +266,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
-    _mapController.dispose();
+    _mapController?.dispose();
     super.dispose();
   }
 }

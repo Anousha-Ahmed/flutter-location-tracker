@@ -20,7 +20,7 @@ in Firebase Firestore.
 - Firebase Authentication
 - Cloud Firestore
 - geolocator
-- flutter_map + MapTiler tiles
+- google_maps_flutter
 
 ## Project Structure
 
@@ -58,8 +58,9 @@ Collection `user_locations`, document ID = user UID:
 3. Run `flutterfire configure` to generate `firebase_options.dart`, and add
    `google-services.json` to `android/app/`.
 4. Add your debug **SHA-1 and SHA-256** fingerprints in Firebase project settings.
-5. Copy `lib/config/secrets.example.dart` to `lib/config/secrets.dart` and put
-   your MapTiler API key in it.
+5. Create a Google Maps API key (Maps SDK for Android) and add this line to
+   `android/local.properties`:
+   MAPS_API_KEY=your_key_here
 6. Set Firestore rules:
 
 ```

@@ -1,3 +1,9 @@
+import java.util.Properties
+
+val localProps = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
 plugins {
     id("com.android.application")
     // START: FlutterFire Configuration
@@ -18,6 +24,7 @@ android {
     }
 
     defaultConfig {
+        manifestPlaceholders["MAPS_API_KEY"] = localProps.getProperty("MAPS_API_KEY") ?: ""
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId = "com.example.location_tracker_app"
         // You can update the following values to match your application needs.
